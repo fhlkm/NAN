@@ -11,7 +11,6 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.database.DatabaseUtils;
 import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
 import android.net.LinkProperties;
@@ -42,7 +41,6 @@ import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
-import androidx.preference.EditTextPreference;
 import androidx.preference.PreferenceManager;
 
 import android.os.Environment;
@@ -67,9 +65,12 @@ import java.net.NetworkInterface;
 import java.net.Socket;
 import java.net.ServerSocket;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 
 /*
@@ -84,6 +85,7 @@ import java.util.Map;
  */
 
 public class MainActivity extends AppCompatActivity implements SharedPreferences.OnSharedPreferenceChangeListener {
+  String TAG="MainActivity";
 
   private final int                 MAC_ADDRESS_MESSAGE             = 55;
   private static final int          MY_PERMISSION_FINE_LOCATION_REQUEST_CODE = 88;
@@ -97,15 +99,18 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
   private NetworkSpecifier          networkSpecifier;
   private PublishDiscoverySession   publishDiscoverySession;
   private SubscribeDiscoverySession subscribeDiscoverySession;
+  Set<PeerHandle> subscriberPeerHandleList = new HashSet<>();
   private PeerHandle                peerHandle;
+  private PeerHandle                subscriberPeerHandle;// related to subscriber
+  private PeerHandle                publisherPeerHandle;// related to publisher
   private byte[]                    myMac;
   private byte[]                    otherMac;
 
   private int                       pubType;
   private int                       subType;
-  private String                    EncryptType;
-  private String                    SERVICE_NAME;
-  private byte[]                    serviceInfo;
+  private String                    EncryptType="Open";
+  private String                    SERVICE_NAME="wifi-aware-service";
+  private byte[]                    serviceInfo="android".getBytes();
   private byte[]                    pmk;
   private String                    psk;
 
@@ -117,56 +122,58 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
   private ServerSocket              serverSocket;
   private Inet6Address              peerIpv6;
   private int                       peerPort;
-//  private final byte[]              serviceInfo            = "android".getBytes();
+  //  private final byte[]              serviceInfo            = "android".getBytes();
 //  private final byte[]              pmk            = "123456789abcdef0123456789abcdef0".getBytes();
   private byte[]                    portOnSystem;
   private int                       portToUse;
   private byte[]                    myIP;
   private byte[]                    otherIP;
   private byte[]                    msgtosend;
+  private int MINI_DISTANCE =0;
+  private int MAX_DISTANCE=1*1000;
 
 
   @Override
   public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
-      if (key.equals(getString(R.string.service_name))) {
-        SERVICE_NAME = sharedPreferences.getString(getResources().getString(R.string.service_name),"org.wifi.nan.test");
-        Log.d("prefs","service Name updated to: " + SERVICE_NAME);
-      } else if (key.equals(getString(R.string.service_specific_info))) {
-        serviceInfo = sharedPreferences.getString(getResources().getString(R.string.service_specific_info),"android").getBytes();
-        Log.d("prefs","service info updated to: " + new String(serviceInfo));
-      } else if (key.equals(getString(R.string.encryptType))) {
-        EncryptType = sharedPreferences.getString(getResources().getString(R.string.encryptType),"open");
-      } else if (key.equals(getString(R.string.pubType))) {
-          String type = sharedPreferences.getString(getResources().getString(R.string.pubType),"unsolicited");
-          if (type.equals("unsolicited")){
-            pubType = PublishConfig.PUBLISH_TYPE_UNSOLICITED;
-            Log.d("prefs","updated pubtype : " + type );
-          } else{
-            pubType = PublishConfig.PUBLISH_TYPE_SOLICITED;
-            Log.d("prefs","updated pubtype : " + type );
-          }
+    if (key.equals(getString(R.string.service_name))) {
+      SERVICE_NAME = sharedPreferences.getString(getResources().getString(R.string.service_name),"org.wifi.nan.test");
+      Log.d("prefs","service Name updated to: " + SERVICE_NAME);
+    } else if (key.equals(getString(R.string.service_specific_info))) {
+      serviceInfo = sharedPreferences.getString(getResources().getString(R.string.service_specific_info),"android").getBytes();
+      Log.d("prefs","service info updated to: " + new String(serviceInfo));
+    } else if (key.equals(getString(R.string.encryptType))) {
+      EncryptType = sharedPreferences.getString(getResources().getString(R.string.encryptType),"open");
+    } else if (key.equals(getString(R.string.pubType))) {
+      String type = sharedPreferences.getString(getResources().getString(R.string.pubType),"unsolicited");
+      if (type.equals("unsolicited")){
+        pubType = PublishConfig.PUBLISH_TYPE_UNSOLICITED;
+        Log.d("prefs","updated pubtype : " + type );
+      } else{
+        pubType = PublishConfig.PUBLISH_TYPE_SOLICITED;
+        Log.d("prefs","updated pubtype : " + type );
+      }
 
-      } else if (key.equals(getString(R.string.subType))) {
-          String type = sharedPreferences.getString(getResources().getString(R.string.subType),"passive");
-          if (type.equals("passive")){
-            subType = SubscribeConfig.SUBSCRIBE_TYPE_PASSIVE;
-            Log.d("prefs","updated subtype: " + type);
-          } else{
-            subType = SubscribeConfig.SUBSCRIBE_TYPE_ACTIVE;
-            Log.d("prefs","updated subtype: " + type);
-          }
+    } else if (key.equals(getString(R.string.subType))) {
+      String type = sharedPreferences.getString(getResources().getString(R.string.subType),"passive");
+      if (type.equals("passive")){
+        subType = SubscribeConfig.SUBSCRIBE_TYPE_PASSIVE;
+        Log.d("prefs","updated subtype: " + type);
+      } else{
+        subType = SubscribeConfig.SUBSCRIBE_TYPE_ACTIVE;
+        Log.d("prefs","updated subtype: " + type);
       }
-      try {
-        if (EncryptType.equals("pmk")) {
-          pmk = sharedPreferences.getString(getResources().getString(R.string.security_pass), "123456789abcdef0123456789abcdef0").getBytes();
-          Log.d("prefs", "pmk " + new String(pmk));
-        } else if (EncryptType.equals("psk")) {
-          psk = sharedPreferences.getString(getResources().getString(R.string.security_pass), "12345678");
-          Log.d("prefs", "psk " + psk);
-        }
-      } catch (java.lang.NullPointerException e){
-        Log.e("prefs", e.toString());
+    }
+    try {
+      if (EncryptType.equals("pmk")) {
+        pmk = sharedPreferences.getString(getResources().getString(R.string.security_pass), "123456789abcdef0123456789abcdef0").getBytes();
+        Log.d("prefs", "pmk " + new String(pmk));
+      } else if (EncryptType.equals("psk")) {
+        psk = sharedPreferences.getString(getResources().getString(R.string.security_pass), "12345678");
+        Log.d("prefs", "psk " + psk);
       }
+    } catch (java.lang.NullPointerException e){
+      Log.e("prefs", e.toString());
+    }
 
   }
 
@@ -242,7 +249,9 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
     publishDiscoverySession = null;
     subscribeDiscoverySession = null;
     peerHandle = null;
-
+    publisherPeerHandle=null;
+    subscriberPeerHandle =null;
+    subscriberPeerHandleList.clear();
     //Log.d("myTag","Supported Aware: " + getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI_AWARE));
     setupSharedPreferences();
     setupPermissions();
@@ -259,10 +268,13 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
         EditText editText = (EditText)findViewById(R.id.msgtext);
         msg += editText.getText().toString();
         msgtosend = msg.getBytes();
-        if (publishDiscoverySession != null && peerHandle != null) {
-          publishDiscoverySession.sendMessage(peerHandle, MESSAGE, msgtosend);
-        } else if(subscribeDiscoverySession != null && peerHandle != null) {
-          subscribeDiscoverySession.sendMessage(peerHandle, MESSAGE, msgtosend);
+        if (publishDiscoverySession != null) {
+          for(PeerHandle ph : subscriberPeerHandleList) {
+            publishDiscoverySession.sendMessage(ph, MESSAGE, msgtosend);
+            Log.i("@onClick", "ph: "+ph);
+          }
+        } else if(subscribeDiscoverySession != null && publisherPeerHandle != null) {
+          subscribeDiscoverySession.sendMessage(publisherPeerHandle, MESSAGE, msgtosend);
         }
       }
     });                                                                                   /* ----- */
@@ -456,15 +468,15 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
    * App Permissions for Fine Location
    **/
   private void setupPermissions() {
-      // If we don't have the record network permission...
-      if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-          // And if we're on SDK M or later...
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-              // Ask again, nicely, for the permissions.
-              String[] permissionsWeNeed = new String[]{ Manifest.permission.ACCESS_FINE_LOCATION };
-              requestPermissions(permissionsWeNeed, MY_PERMISSION_FINE_LOCATION_REQUEST_CODE);
-          }
+    // If we don't have the record network permission...
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+      // And if we're on SDK M or later...
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        // Ask again, nicely, for the permissions.
+        String[] permissionsWeNeed = new String[]{ Manifest.permission.ACCESS_FINE_LOCATION };
+        requestPermissions(permissionsWeNeed, MY_PERMISSION_FINE_LOCATION_REQUEST_CODE);
       }
+    }
 
 /*      if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
         // And if we're on SDK M or later...
@@ -475,15 +487,15 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
         }
       }*/
 
-      //-------------------------------------------------------------------------------------------- +++++
-      if (ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-        // And if we're on SDK M or later...
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-          // Ask again, nicely, for the permissions.
-          String[] permissionsWeNeed = new String[]{ Manifest.permission.WRITE_EXTERNAL_STORAGE };
-          requestPermissions(permissionsWeNeed, MY_PERMISSION_EXTERNAL_REQUEST_CODE);
-        }
+    //-------------------------------------------------------------------------------------------- +++++
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+      // And if we're on SDK M or later...
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        // Ask again, nicely, for the permissions.
+        String[] permissionsWeNeed = new String[]{ Manifest.permission.WRITE_EXTERNAL_STORAGE };
+        requestPermissions(permissionsWeNeed, MY_PERMISSION_EXTERNAL_REQUEST_CODE);
       }
+    }
     if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
       // And if we're on SDK M or later...
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -492,26 +504,26 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
         requestPermissions(permissionsWeNeed, MY_PERMISSION_EXTERNAL_READ_REQUEST_CODE);
       }
     }
-      //-------------------------------------------------------------------------------------------- -----
+    //-------------------------------------------------------------------------------------------- -----
   }
 
   @Override
   public void onRequestPermissionsResult(int requestCode,
                                          @NonNull String permissions[], @NonNull int[] grantResults) {
-      switch (requestCode) {
-          case MY_PERMISSION_FINE_LOCATION_REQUEST_CODE: {
-              // If request is cancelled, the result arrays are empty.
-              if (grantResults.length > 0
-                      && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                 return;
+    switch (requestCode) {
+      case MY_PERMISSION_FINE_LOCATION_REQUEST_CODE: {
+        // If request is cancelled, the result arrays are empty.
+        if (grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+          return;
 
-              } else {
-                  Toast.makeText(this, "Permission for location not granted. NAN can't run.", Toast.LENGTH_LONG).show();
-                  finish();
-                  // The permission was denied, so we can show a message why we can't run the app
-                  // and then close the app.
-              }
-          }
+        } else {
+          Toast.makeText(this, "Permission for location not granted. NAN can't run.", Toast.LENGTH_LONG).show();
+          finish();
+          // The permission was denied, so we can show a message why we can't run the app
+          // and then close the app.
+        }
+      }
 /*          case MY_PERMISSION_BACKGROUND_LOCATION_REQUEST_CODE: {
             // If request is cancelled, the result arrays are empty.
             if (grantResults.length > 0
@@ -523,31 +535,31 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
               // and then close the app.
             }
           }*/
-          //-------------------------------------------------------------------------------------------- +++++
-          case MY_PERMISSION_EXTERNAL_REQUEST_CODE: {
-          // If request is cancelled, the result arrays are empty.
-            if (grantResults.length > 0
-                  && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-              return;
+      //-------------------------------------------------------------------------------------------- +++++
+      case MY_PERMISSION_EXTERNAL_REQUEST_CODE: {
+        // If request is cancelled, the result arrays are empty.
+        if (grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+          return;
 
-            } else {
-              Toast.makeText(this, "no sd card access", Toast.LENGTH_LONG).show();
-            }
-          }
-          case MY_PERMISSION_EXTERNAL_READ_REQUEST_CODE: {
-            // If request is cancelled, the result arrays are empty.
-            if (grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-              return;
-
-            } else {
-              Toast.makeText(this, "no sd card access", Toast.LENGTH_LONG).show();
-            }
-          }
-          //-------------------------------------------------------------------------------------------- -----
-          // Other permissions could go down here
-
+        } else {
+          Toast.makeText(this, "no sd card access", Toast.LENGTH_LONG).show();
+        }
       }
+      case MY_PERMISSION_EXTERNAL_READ_REQUEST_CODE: {
+        // If request is cancelled, the result arrays are empty.
+        if (grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+          return;
+
+        } else {
+          Toast.makeText(this, "no sd card access", Toast.LENGTH_LONG).show();
+        }
+      }
+      //-------------------------------------------------------------------------------------------- -----
+      // Other permissions could go down here
+
+    }
   }
 
   @TargetApi(26)
@@ -563,9 +575,9 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
     Log.d("myTag", "building network interface");
     Log.d("myTag", "using networkspecifier: " + networkSpecifier.toString());
     NetworkRequest networkRequest = new NetworkRequest.Builder()
-        .addTransportType(NetworkCapabilities.TRANSPORT_WIFI_AWARE)
-        .setNetworkSpecifier(networkSpecifier)
-        .build();
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI_AWARE)
+            .setNetworkSpecifier(networkSpecifier)
+            .build();
 
     Log.d("myTag", "finish building network interface");
     connectivityManager.requestNetwork(networkRequest, new NetworkCallback(){
@@ -684,26 +696,26 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
     Log.d("myTag", "Current phone build" + Build.VERSION.SDK_INT +"\tMinimum:"+ Build.VERSION_CODES.O);
     Log.d("myTag","Supported Aware: " + getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI_AWARE));
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        Log.d("myTag", "Entering OnResume is executed");
-        IntentFilter filter   = new IntentFilter(WifiAwareManager.ACTION_WIFI_AWARE_STATE_CHANGED);
-        broadcastReceiver     = new BroadcastReceiver() {
-          @Override
-          public void onReceive(Context context, Intent intent) {
-            String status = "";
-            wifiAwareManager.getCharacteristics();
-            boolean nanAvailable = wifiAwareManager.isAvailable();
-            Log.d("myTag", "NAN is available");
-            if (nanAvailable) {
-              attachToNanSession();
-              status = "NAN has become Available";
-              Log.d("myTag", "NAN attached");
-            } else {
-              status = "NAN has become Unavailable";
-              Log.d("myTag", "NAN unavailable");
-            }
-
-            setStatus(status);
+      Log.d("myTag", "Entering OnResume is executed");
+      IntentFilter filter   = new IntentFilter(WifiAwareManager.ACTION_WIFI_AWARE_STATE_CHANGED);
+      broadcastReceiver     = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+          String status = "";
+          wifiAwareManager.getCharacteristics();
+          boolean nanAvailable = wifiAwareManager.isAvailable();
+          Log.d("myTag", "NAN is available");
+          if (nanAvailable) {
+            attachToNanSession();
+            status = "NAN has become Available";
+            Log.d("myTag", "NAN attached");
+          } else {
+            status = "NAN has become Unavailable";
+            Log.d("myTag", "NAN unavailable");
           }
+
+          setStatus(status);
+        }
       };
 
       getApplicationContext().registerReceiver(broadcastReceiver, filter);
@@ -769,7 +781,7 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
     }, null);
   }
 
-  @TargetApi(26)
+  @TargetApi(28)
   private void publishService() {
 
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) { return; }
@@ -781,14 +793,34 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
       Log.d("nanPUBLISH", "publish solicited "+pubType);
 
     PublishConfig config = new PublishConfig.Builder()
-        .setServiceName(SERVICE_NAME)
-        .setServiceSpecificInfo(serviceInfo)
-        .setPublishType(pubType)
-        .build();
+            .setServiceName(SERVICE_NAME)
+            .setServiceSpecificInfo(getMacAddress())
+            .setPublishType(pubType)
+            .setRangingEnabled(true)
+            .build();
 
     //-------------------------------------------------------------------------------------------- +++++
     Log.d("nanPUBLISH", "build finish");
     wifiAwareSession.publish(config, new DiscoverySessionCallback() {
+
+      @Override
+      public void onSessionConfigUpdated() {
+        super.onSessionConfigUpdated();
+        Log.i(TAG,"@onSessionConfigUpdated");
+      }
+
+      @Override
+      public void onSessionConfigFailed() {
+        super.onSessionConfigFailed();
+        Log.i(TAG,"@onSessionConfigFailed");
+      }
+
+      @Override
+      public void onSessionTerminated() {
+        super.onSessionTerminated();
+        Log.i(TAG,"@onSessionTerminated");
+      }
+
       @Override
       public void onPublishStarted(@NonNull PublishDiscoverySession session) {
         super.onPublishStarted(session);
@@ -799,9 +831,11 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
         sendBtn.setEnabled(false);
         Button responderButton = (Button)findViewById(R.id.responderButton);
         responderButton.setEnabled(true);
-        if (publishDiscoverySession != null && peerHandle != null) {
-          publishDiscoverySession.sendMessage(peerHandle, MAC_ADDRESS_MESSAGE, myMac);
-          Log.d("nanPUBLISH", "onPublishStarted sending mac");
+        if (publishDiscoverySession != null ) {
+          for(PeerHandle ph:subscriberPeerHandleList) {
+            publishDiscoverySession.sendMessage(ph, MAC_ADDRESS_MESSAGE, myMac);
+            Log.d("nanPUBLISH", "onPublishStarted sending mac");
+          }
 
           Button initiatorButton = (Button)findViewById(R.id.initiatorButton);
           initiatorButton.setEnabled(false);
@@ -811,14 +845,23 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
       @Override
       public void onServiceDiscovered(PeerHandle peerHandle_, byte[] serviceSpecificInfo, List<byte[]> matchFilter) {
         super.onServiceDiscovered(peerHandle, serviceSpecificInfo, matchFilter);
+        subscriberPeerHandleList.add(peerHandle_);
+        subscriberPeerHandle = peerHandle_;
+        Log.d("nanPUBLISH @onServiceDiscovered", "onServiceDiscovered found peerHandle");
+      }
 
-        peerHandle = peerHandle_;
-        Log.d("nanPUBLISH", "onServiceDiscovered found peerHandle");
+      @Override
+      public void onServiceDiscoveredWithinRange(PeerHandle peerHandle_, byte[] serviceSpecificInfo, List<byte[]> matchFilter, int distanceMm) {
+        super.onServiceDiscoveredWithinRange(peerHandle, serviceSpecificInfo, matchFilter, distanceMm);
+        subscriberPeerHandleList.add(peerHandle_);
+        subscriberPeerHandle = peerHandle_;
+        Log.d("nanPUBLISH  @onServiceDiscoveredWithinRange", "onServiceDiscovered found peerHandle");
       }
 
       @Override
       public void onMessageReceived(PeerHandle peerHandle_, byte[] message) {
         super.onMessageReceived(peerHandle, message);
+        subscriberPeerHandleList.add(peerHandle_);
         Log.d("nanPUBLISH", "received message");
         if(message.length == 2) {
           portToUse = byteToPortInt(message);
@@ -834,11 +877,13 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
           //Toast.makeText(MainActivity.this, "message received", Toast.LENGTH_SHORT).show();
         }
 
-        peerHandle = peerHandle_;
+        subscriberPeerHandle = peerHandle_;
 
         if (publishDiscoverySession != null && peerHandle != null) {
-          publishDiscoverySession.sendMessage(peerHandle, MAC_ADDRESS_MESSAGE, myMac);
-          Log.d("nanPUBLISH", "onMessageReceived sending mac");
+          for(PeerHandle ph:subscriberPeerHandleList) {
+            publishDiscoverySession.sendMessage(ph, MAC_ADDRESS_MESSAGE, myMac);
+            Log.d("nanPUBLISH", "onMessageReceived sending mac");
+          }
           Button responderButton = (Button)findViewById(R.id.responderButton);
           Button initiatorButton = (Button)findViewById(R.id.initiatorButton);
           initiatorButton.setEnabled(false);
@@ -850,7 +895,7 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
   }
 
   //-------------------------------------------------------------------------------------------- +++++
-  @TargetApi(26)
+  @TargetApi(28)
   private void subscribeToService() {
 
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) { return; }
@@ -862,21 +907,40 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
       Log.d("nanPUBLISH", "subscribe passive ");
 
     SubscribeConfig config = new SubscribeConfig.Builder()
-        .setServiceName(SERVICE_NAME)
-        .setServiceSpecificInfo(serviceInfo)
-        .setSubscribeType(subType)
-        .build();
+            .setServiceName(SERVICE_NAME)
+            .setServiceSpecificInfo(getMacAddress())
+            .setSubscribeType(subType)
+            .setMaxDistanceMm(MAX_DISTANCE)
+            .build();
     Log.d("nanSUBSCRIBE", "build finish");
     wifiAwareSession.subscribe(config, new DiscoverySessionCallback() {
 
       @Override
+      public void onSessionConfigUpdated() {
+        super.onSessionConfigUpdated();
+        Log.i(TAG,"onSessionConfigUpdated");
+      }
+
+      @Override
+      public void onSessionConfigFailed() {
+        super.onSessionConfigFailed();
+        Log.i(TAG,"onSessionConfigFailed");
+      }
+
+      @Override
+      public void onSessionTerminated() {
+        super.onSessionTerminated();
+        Log.i(TAG,"onSessionTerminated");
+      }
+
+      @Override
       public void onServiceDiscovered(PeerHandle peerHandle_, byte[] serviceSpecificInfo, List<byte[]> matchFilter) {
-        super.onServiceDiscovered(peerHandle, serviceSpecificInfo, matchFilter);
+        super.onServiceDiscovered(peerHandle_, serviceSpecificInfo, matchFilter);
 
-        peerHandle = peerHandle_;
+        publisherPeerHandle = peerHandle_;
 
-        if (subscribeDiscoverySession != null && peerHandle != null) {
-          subscribeDiscoverySession.sendMessage(peerHandle, MAC_ADDRESS_MESSAGE, myMac);
+        if (subscribeDiscoverySession != null && publisherPeerHandle != null) {
+          subscribeDiscoverySession.sendMessage(publisherPeerHandle, MAC_ADDRESS_MESSAGE, myMac);
           Log.d("nanSUBSCRIBE", "onServiceDiscovered send mac");
           Button responderButton = (Button)findViewById(R.id.responderButton);
           Button initiatorButton = (Button)findViewById(R.id.initiatorButton);
@@ -885,14 +949,15 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
         }
       }
 
+
       @Override
       public void onSubscribeStarted(@NonNull SubscribeDiscoverySession session) {
         super.onSubscribeStarted(session);
 
         subscribeDiscoverySession = session;
 
-        if (subscribeDiscoverySession != null && peerHandle != null) {
-          subscribeDiscoverySession.sendMessage(peerHandle, MAC_ADDRESS_MESSAGE, myMac);
+        if (subscribeDiscoverySession != null && publisherPeerHandle != null) {
+          subscribeDiscoverySession.sendMessage(publisherPeerHandle, MAC_ADDRESS_MESSAGE, myMac);
           Log.d("nanSUBSCRIBE", "onServiceStarted send mac");
           Button responderButton = (Button)findViewById(R.id.responderButton);
           Button initiatorButton = (Button)findViewById(R.id.initiatorButton);
@@ -902,19 +967,38 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
       }
 
       @Override
-      public void onMessageReceived(PeerHandle peerHandle, byte[] message) {
-        super.onMessageReceived(peerHandle, message);
-        Log.d("nanSUBSCRIBE", "received message");
+      public void onServiceDiscoveredWithinRange(PeerHandle peerHandle_, byte[] serviceSpecificInfo, List<byte[]> matchFilter, int distanceMm) {
+        super.onServiceDiscoveredWithinRange(peerHandle_, serviceSpecificInfo, matchFilter, distanceMm);
+        Log.d("onServiceDiscoveredWithinRange nanSUBSCRIBE","distance: "+distanceMm+" serviceScpeicfInfo: "+new String(serviceSpecificInfo));
+
+        subscriberPeerHandle = peerHandle_;
+
+        if (subscribeDiscoverySession != null && subscriberPeerHandle != null) {
+          subscribeDiscoverySession.sendMessage(subscriberPeerHandle, MAC_ADDRESS_MESSAGE, myMac);
+          Log.d("onServiceDiscoveredWithinRange nanSUBSCRIBE", "onServiceDiscovered send mac");
+          Button responderButton = (Button)findViewById(R.id.responderButton);
+          Button initiatorButton = (Button)findViewById(R.id.initiatorButton);
+          initiatorButton.setEnabled(true);
+          responderButton.setEnabled(false);
+        }
+      }
+
+
+      @Override
+      public void onMessageReceived(PeerHandle peerHandle_, byte[] message) {
+        super.onMessageReceived(peerHandle_, message);
+        publisherPeerHandle = peerHandle_;
+        Log.d("nanSUBSCRIBE", "received message:  "+peerHandle_.hashCode()+"   message"+new String(message));
         //Toast.makeText(MainActivity.this, "received", Toast.LENGTH_LONG).show();
         if(message.length == 2) {
           portToUse = byteToPortInt(message);
           Log.d("received", "will use port number "+ portToUse);
         } else if (message.length == 6){
           setOtherMacAddress(message);
-          //Toast.makeText(MainActivity.this, "mac received", Toast.LENGTH_SHORT).show();
+          Toast.makeText(MainActivity.this, "mac received", Toast.LENGTH_SHORT).show();
         } else if (message.length == 16) {
           setOtherIPAddress(message);
-          //Toast.makeText(MainActivity.this, "ip received", Toast.LENGTH_SHORT).show();
+          Toast.makeText(MainActivity.this, "ip received", Toast.LENGTH_SHORT).show();
         } else if (message.length > 16) {
           setMessage(message);
           //Toast.makeText(MainActivity.this, "message received", Toast.LENGTH_SHORT).show();
@@ -1091,7 +1175,7 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
               fos.write(buffer,0,read);
               totalRead += read;
               if (totalRead%(4096*2500)==0) {//every 10MB update status
-                  Log.d("clientThread", "total bytes retrieved:" + totalRead);
+                Log.d("clientThread", "total bytes retrieved:" + totalRead);
               }
             }
             Log.d("serverThread", "finished file transfer: " + totalRead);
@@ -1149,9 +1233,9 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
               break;
             }
           }
-            if (uri == null) {
-              Log.d( "clientThread","\"IEEEspecJun2018.pdf\" not found");
-            }
+          if (uri == null) {
+            Log.d( "clientThread","\"IEEEspecJun2018.pdf\" not found");
+          }
 
           InputStream in = getContentResolver().openInputStream(uri);
           //InputStream in = new FileInputStream("/sdcard/Download/IEEEspecJun2018.pdf");
@@ -1163,12 +1247,12 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
             totalSent += count;
             dos.write(buffer, 0, count);
             if (totalSent%(10240*200)==0) {//every 2MB update status
-                Log.d("clientThread", "total bytes sent:" + totalSent  +"\t"+ fsize);
-                try{
-                  float percent = (float) totalSent/fsize;
-                  setStatus("percent sent: "+ String.format("%.2f",percent));
-                } catch (Exception e) {
-                  Log.e("clientThread",e.toString());
+              Log.d("clientThread", "total bytes sent:" + totalSent  +"\t"+ fsize);
+              try{
+                float percent = (float) totalSent/fsize;
+                setStatus("percent sent: "+ String.format("%.2f",percent));
+              } catch (Exception e) {
+                Log.e("clientThread",e.toString());
               }
             }
           }
@@ -1189,6 +1273,10 @@ public class MainActivity extends AppCompatActivity implements SharedPreferences
 
   }
 
+  private byte[] getMacAddress(){
+    EditText editText = (EditText)findViewById(R.id.macAddress);
+    return editText.getText().toString().getBytes();
+  }
   //-------------------------------------------------------------------------------------------- -----
 
 }
