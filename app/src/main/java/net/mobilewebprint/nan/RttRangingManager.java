@@ -105,7 +105,7 @@ class RttRangingManager {
                  ((FuseWifiAwareRTTActivity) mContext).displayToast("getDistanceMm(): invoked on an invalid result: getStatus()=1");
             }else {
                 Log.d(TAG, res.getDistanceMm() + " is distance");
-                ((TextView) ((MainActivity) mContext).findViewById(R.id.distance)).setText("  distance: " + res.getDistanceMm());
+                ((TextView) ((FuseWifiAwareRTTActivity) mContext).findViewById(R.id.distance)).setText("  distance: " + res.getDistanceMm());
             }
 //            Timber.d("Result: %d RSSI: %d Distance: %d mm", res.getRangingTimestampMillis(), res.getRssi(), res
 //                    .getDistanceMm());

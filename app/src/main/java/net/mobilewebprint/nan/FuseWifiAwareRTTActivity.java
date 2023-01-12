@@ -118,7 +118,7 @@ public class FuseWifiAwareRTTActivity extends  AppCompatActivity implements Shar
         private byte[]                    otherIP;
         private byte[]                    msgtosend;
         private int MINI_DISTANCE =0;
-        private int MAX_DISTANCE=5*1000;
+        private int MAX_DISTANCE=10*1000;
 
         RttRangingManager rttRangingManager;
         final String subscribeSuccess ="Subscribe successs";
@@ -473,11 +473,10 @@ public class FuseWifiAwareRTTActivity extends  AppCompatActivity implements Shar
 
     @Override
     protected void onDestroy() {
+        getApplicationContext().unregisterReceiver(broadcastReceiver);
+        closeSession();
         super.onDestroy();
-        if(null != publishDiscoverySession)
-            publishDiscoverySession.close();
-        if(null != subscribeDiscoverySession)
-            subscribeDiscoverySession.close();
+
     }
 
     /**
@@ -1015,8 +1014,7 @@ public class FuseWifiAwareRTTActivity extends  AppCompatActivity implements Shar
         @Override
         protected void onPause() {
             super.onPause();
-            getApplicationContext().unregisterReceiver(broadcastReceiver);
-            closeSession();
+
         }
 
         private void closeSession() {
