@@ -32,4 +32,5 @@
   <string name="pmk">pairwise master key (byte[] pmk)</string>
   <string name="psk">pre-shared key (String psk)</string>
   <string name="security_pass">security_pass</string>
+  <string name="log">%1$d RSSI: %2$d Distance: %3$d mm\n%4$s</string>
 </resources>
